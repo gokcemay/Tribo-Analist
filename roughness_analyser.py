@@ -23,6 +23,218 @@ COLOR_TEXT_MUTED = "#A6ADC8" # Muted text
 COLOR_BORDER = "#313244"     # Panel borders
 COLOR_BUTTON = "#313244"     # Default button background
 COLOR_BUTTON_HOVER = "#45475A" # Button hover
+COLOR_WARN = "#F9E2AF"       # Amber for "needs manual review"
+
+# --- Automatic wear-track detection -----------------------------------------
+# A wear track is a valley that is both much deeper than the surface roughness
+# and much wider than any roughness feature. The routines below locate the
+# un-worn surface trend, measure how far the profile drops below it, and keep
+# only valleys that clearly stand out from the roughness noise floor.
+
+DETECT_MIN_DEPTH_SIGMA = 4.0   # valley must be this many roughness sigmas deep
+DETECT_MIN_WIDTH_FRAC = 0.02   # ...and this fraction of the trace long
+DETECT_MIN_WIDTH_ABS = 0.05    # ...with an absolute floor in X units (mm)
+DETECT_MAX_WIDTH_FRAC = 0.80   # a valley wider than this leaves no reference
+
+
+def _trapz(yv, xv):
+    """Trapezoidal integration (compatible with both NumPy 1.x and 2.x)."""
+    if len(xv) < 2:
+        return 0.0
+    return float(np.sum((yv[:-1] + yv[1:]) / 2.0 * np.diff(xv)))
+
+
+def _moving_average(y, w):
+    """Smooths point-to-point roughness noise without shifting features."""
+    if w < 3:
+        return y.copy()
+    if w % 2 == 0:
+        w += 1
+    pad = w // 2
+    yp = np.pad(y, pad, mode='edge')
+    return np.convolve(yp, np.ones(w, dtype=float) / w, mode='valid')
+
+
+def _mad_sigma(v):
+    """Outlier-resistant standard deviation estimate."""
+    if len(v) == 0:
+        return 0.0
+    return float(1.4826 * np.median(np.abs(v - np.median(v))))
+
+
+def _robust_baseline(x, y, deg=1, iters=20):
+    """
+    Fits the trend of the *un-worn* surface.
+
+    A plain least-squares fit would be dragged down into the wear groove, so
+    points sitting far below the current trend are rejected and the fit is
+    repeated until it settles on the intact surface.
+    """
+    span = x.max() - x.min()
+    xn = (x - x.mean()) / (span / 2.0 if span > 0 else 1.0)
+    keep = np.ones(len(x), dtype=bool)
+    coef = np.polyfit(xn, y, deg)
+    for _ in range(iters):
+        coef = np.polyfit(xn[keep], y[keep], deg)
+        r = y - np.polyval(coef, xn)
+        s = _mad_sigma(r[keep])
+        if s <= 0:
+            break
+        new = (r > -2.0 * s) & (r < 3.0 * s)
+        if new.sum() < max(50, 0.15 * len(y)):
+            break
+        if np.array_equal(new, keep):
+            break
+        keep = new
+    return np.polyval(coef, xn), keep
+
+
+def _true_runs(mask):
+    """Returns (start, end_inclusive) index pairs for each contiguous True run."""
+    if not mask.any():
+        return []
+    edges = np.flatnonzero(np.diff(mask.astype(np.int8)))
+    starts = np.r_[0, edges + 1]
+    ends = np.r_[edges, len(mask) - 1]
+    return [(s, e) for s, e in zip(starts, ends) if mask[s]]
+
+
+def detect_wear_scar(x, y,
+                     min_depth_sigma=DETECT_MIN_DEPTH_SIGMA,
+                     min_width_frac=DETECT_MIN_WIDTH_FRAC,
+                     min_width_abs=DETECT_MIN_WIDTH_ABS,
+                     max_width_frac=DETECT_MAX_WIDTH_FRAC):
+    """
+    Locates the wear track in a stylus profile.
+
+    Returns a dict with:
+        status     : 'ok' | 'ambiguous' | 'none'
+        i1, i2     : endpoint indices into x/y (None when nothing was found)
+        depth      : maximum drop below the un-worn surface
+        width      : track width in X units
+        snr        : depth divided by the roughness noise level
+        confidence : 0..1 heuristic score
+        reason     : human-readable explanation, shown to the user
+    """
+    out = {'status': 'none', 'i1': None, 'i2': None, 'reason': '',
+           'depth': 0.0, 'width': 0.0, 'area': 0.0, 'snr': 0.0, 'confidence': 0.0}
+
+    n = len(x)
+    if n < 200:
+        out['reason'] = "Too few data points to analyse"
+        return out
+
+    L = float(x[-1] - x[0])
+    if L <= 0:
+        out['reason'] = "Invalid X range"
+        return out
+
+    # 1) Suppress point-to-point roughness noise (window ~1% of the trace).
+    ys = _moving_average(y, max(5, int(round(0.01 * n))))
+
+    # 2) Locate the un-worn surface and measure the drop below it.
+    base, keep = _robust_baseline(x, ys, deg=1)
+    d = base - ys                       # positive => below the original surface
+    sigma = _mad_sigma((ys - base)[keep]) or _mad_sigma(ys - base)
+    if sigma <= 0:
+        out['reason'] = "Flat or degenerate profile"
+        return out
+
+    dpeak = float(d.max())
+    out['snr'] = dpeak / sigma
+    if dpeak <= 0:
+        out['reason'] = "No valley below the surface trend"
+        return out
+
+    # 3) Hysteresis segmentation: find a strong core, then grow out to the foot.
+    hi = max(min_depth_sigma * sigma, 0.45 * dpeak)
+    lo = max(0.5 * sigma, 0.05 * dpeak)
+
+    cores = _true_runs(d > hi)
+    if not cores:
+        out['reason'] = (f"No valley deeper than {min_depth_sigma:.0f}x the roughness "
+                         f"(best is {out['snr']:.1f}x)")
+        return out
+
+    # Walk outwards until the profile reaches the groove foot, or stops
+    # descending -- the latter catches the shoulder / pile-up ridge and keeps a
+    # curved un-worn surface from swallowing the whole trace.
+    rise_tol = max(0.5 * sigma, 0.02 * dpeak)
+
+    def walk(start, step):
+        i = start
+        run_min = d[i]
+        while 0 <= i + step <= n - 1:
+            v = d[i + step]
+            if v <= lo:
+                return i + step
+            if v > run_min + rise_tol:
+                return i
+            run_min = min(run_min, v)
+            i += step
+        return i
+
+    cands = []
+    for s, e in cores:
+        i1, i2 = walk(s, -1), walk(e, +1)
+        cands.append({'i1': i1, 'i2': i2,
+                      'depth': float(d[s:e + 1].max()),
+                      'width': float(x[i2] - x[i1]),
+                      'area': _trapz(np.clip(d[i1:i2 + 1], 0, None), x[i1:i2 + 1])})
+
+    # Merge candidates whose grown extents overlap.
+    cands.sort(key=lambda c: c['i1'])
+    merged = [cands[0]]
+    for c in cands[1:]:
+        prev = merged[-1]
+        if c['i1'] <= prev['i2']:
+            prev['i2'] = max(prev['i2'], c['i2'])
+            prev['depth'] = max(prev['depth'], c['depth'])
+            prev['width'] = float(x[prev['i2']] - x[prev['i1']])
+            prev['area'] = _trapz(np.clip(d[prev['i1']:prev['i2'] + 1], 0, None),
+                                  x[prev['i1']:prev['i2'] + 1])
+        else:
+            merged.append(c)
+
+    min_width = max(min_width_abs, min_width_frac * L)
+    valid = [c for c in merged if c['width'] >= min_width]
+    if not valid:
+        widest = max(merged, key=lambda c: c['width'])
+        out['reason'] = (f"Deepest valley is only {widest['width']:.3f} wide "
+                         f"(needs {min_width:.3f}) - looks like roughness, not a track")
+        return out
+
+    valid.sort(key=lambda c: c['area'], reverse=True)
+    best = valid[0]
+
+    if best['width'] > max_width_frac * L:
+        out.update(best)
+        out['reason'] = "Valley spans nearly the whole trace - no un-worn surface to reference"
+        return out
+
+    # A track touching a trace end has no shoulder on that side to measure from.
+    edge_gap = max(3, int(0.005 * n))
+    if best['i1'] <= edge_gap or best['i2'] >= n - 1 - edge_gap:
+        out.update(best)
+        out['reason'] = "Valley runs off the edge of the trace"
+        return out
+
+    if len(valid) > 1 and valid[1]['area'] > 0.55 * best['area']:
+        out.update(best)
+        out['status'] = 'ambiguous'
+        out['reason'] = f"{len(valid)} valleys of comparable size - cannot tell which is the track"
+        return out
+
+    depth_score = min(1.0, (best['depth'] / sigma) / 12.0)
+    width_score = min(1.0, best['width'] / (4.0 * min_width))
+    sep_score = 1.0 if len(valid) == 1 else min(1.0, 1.0 - valid[1]['area'] / best['area'])
+
+    out.update(best)
+    out['status'] = 'ok'
+    out['confidence'] = float(0.5 * depth_score + 0.25 * width_score + 0.25 * sep_score)
+    out['reason'] = "Detected"
+    return out
+
 
 class RoughnessAnalyserApp:
     def __init__(self, root):
@@ -44,6 +256,11 @@ class RoughnessAnalyserApp:
         self.current_measurements = [] # List of filenames for the selected sample (max 4)
         
         self.loaded_data = {}   # Cached parsed data: {filename: (x, y)}
+        self.raw_data = {}      # Unfiltered profile (cols C&D): {filename: (x, y)}
+        self.detections = {0: None, 1: None, 2: None, 3: None} # Auto-detect result per subplot
+        self.auto_detect_enabled = True  # Run detection automatically on sample load
+        # 'filtered' = cols E&F (original behaviour), 'raw' = cols C&D
+        self.profile_source = tk.StringVar(value='filtered')
         self.clicks = {0: [], 1: [], 2: [], 3: []} # Snapped indices clicked for each subplot: {ax_idx: [idx1, idx2]}
         self.computed_areas = {0: None, 1: None, 2: None, 3: None} # Saved area results: {ax_idx: float or None}
         self.clicked_coords = {0: [None, None], 1: [None, None], 2: [None, None], 3: [None, None]} # Clicked coordinates for display: {ax_idx: [(x1,y1), (x2,y2)]}
@@ -186,6 +403,9 @@ class RoughnessAnalyserApp:
                 pass
                 
         self.root.bind_all("<MouseWheel>", _on_mousewheel)
+        # Kept so other windows (e.g. batch analysis) can restore it after
+        # temporarily claiming the global mouse-wheel binding.
+        self._sidebar_wheel_handler = _on_mousewheel
         
         # Folder Selector Button
         self.dir_btn = tk.Button(
@@ -257,6 +477,100 @@ class RoughnessAnalyserApp:
         # Bind double click / single click to select sample
         self.sample_listbox.bind("<<ListboxSelect>>", self.on_sample_selected)
         
+        # Automatic wear track detection section
+        detect_lbl = tk.Label(
+            sidebar_scroll_frame,
+            text="WEAR TRACK DETECTION:",
+            fg=COLOR_ACCENT,
+            bg=COLOR_SIDEBAR,
+            font=("Segoe UI", 10, "bold"),
+            anchor=tk.W
+        )
+        detect_lbl.pack(fill=tk.X, pady=(0, 5))
+
+        detect_card = tk.Frame(sidebar_scroll_frame, bg=COLOR_CARD, bd=1,
+                               highlightbackground=COLOR_BORDER, highlightthickness=1,
+                               padx=10, pady=8)
+        detect_card.pack(fill=tk.X, pady=(0, 15))
+
+        # Which trace is plotted and measured. 'filtered' reproduces the
+        # original behaviour exactly, so existing results are unaffected.
+        src_row = tk.Frame(detect_card, bg=COLOR_CARD)
+        src_row.pack(fill=tk.X, pady=(0, 6))
+        tk.Label(src_row, text="Profil:", fg=COLOR_TEXT, bg=COLOR_CARD,
+                 font=("Segoe UI", 9), anchor=tk.W).pack(side=tk.LEFT)
+        for label, value in (("E&F (filtre)", 'filtered'), ("C&D (ham)", 'raw')):
+            tk.Radiobutton(
+                src_row, text=label, value=value, variable=self.profile_source,
+                bg=COLOR_CARD, fg=COLOR_TEXT, selectcolor=COLOR_BG,
+                activebackground=COLOR_CARD, activeforeground=COLOR_ACCENT,
+                font=("Segoe UI", 9), bd=0, highlightthickness=0, cursor="hand2",
+                command=self.on_profile_source_changed
+            ).pack(side=tk.LEFT, padx=(6, 0))
+
+        self.auto_detect_var = tk.BooleanVar(value=self.auto_detect_enabled)
+        auto_chk = tk.Checkbutton(
+            detect_card,
+            text="Numune seçilince otomatik işaretle",
+            variable=self.auto_detect_var,
+            bg=COLOR_CARD,
+            fg=COLOR_TEXT,
+            selectcolor=COLOR_BG,
+            activebackground=COLOR_CARD,
+            activeforeground=COLOR_ACCENT,
+            font=("Segoe UI", 9),
+            anchor=tk.W,
+            bd=0,
+            highlightthickness=0,
+            cursor="hand2"
+        )
+        auto_chk.pack(fill=tk.X)
+
+        self.detect_btn = tk.Button(
+            detect_card,
+            text="🎯 Detect Wear Track (This Sample)",
+            font=("Segoe UI", 9, "bold"),
+            bg=COLOR_BUTTON,
+            fg=COLOR_TEXT,
+            activebackground=COLOR_BUTTON_HOVER,
+            activeforeground=COLOR_ACCENT,
+            bd=0,
+            pady=6,
+            cursor="hand2",
+            command=lambda: self.auto_detect_current_sample(announce=True)
+        )
+        self.detect_btn.pack(fill=tk.X, pady=(8, 4))
+
+        self.scan_btn = tk.Button(
+            detect_card,
+            text="🔍 Scan All Samples & Report",
+            font=("Segoe UI", 9, "bold"),
+            bg=COLOR_BUTTON,
+            fg=COLOR_TEXT,
+            activebackground=COLOR_BUTTON_HOVER,
+            activeforeground=COLOR_ACCENT,
+            bd=0,
+            pady=6,
+            cursor="hand2",
+            command=self.scan_all_samples
+        )
+        self.scan_btn.pack(fill=tk.X, pady=(0, 4))
+
+        self.batch_btn = tk.Button(
+            detect_card,
+            text="📑 Batch Analysis (Tüm Numuneler)",
+            font=("Segoe UI", 9, "bold"),
+            bg=COLOR_BUTTON,
+            fg=COLOR_ACCENT,
+            activebackground=COLOR_BUTTON_HOVER,
+            activeforeground=COLOR_SUCCESS,
+            bd=0,
+            pady=6,
+            cursor="hand2",
+            command=self.open_batch_window
+        )
+        self.batch_btn.pack(fill=tk.X, pady=(0, 0))
+
         # Selection Results header
         results_lbl = tk.Label(
             sidebar_scroll_frame,
@@ -290,13 +604,20 @@ class RoughnessAnalyserApp:
             # Area label
             area_lbl = tk.Label(card, text="Area: --", fg=COLOR_HIGHLIGHT, bg=COLOR_CARD, font=("Segoe UI", 10, "bold"), anchor=tk.W)
             area_lbl.pack(fill=tk.X)
-            
+
+            # Auto-detection status
+            det_lbl = tk.Label(card, text="", fg=COLOR_TEXT_MUTED, bg=COLOR_CARD,
+                               font=("Segoe UI", 8), anchor=tk.W,
+                               justify=tk.LEFT, wraplength=290)
+            det_lbl.pack(fill=tk.X)
+
             self.plot_info_widgets.append({
                 'card': card,
                 'title': title,
                 'p1': p1_lbl,
                 'p2': p2_lbl,
-                'area': area_lbl
+                'area': area_lbl,
+                'detect': det_lbl
             })
             
         # Wear Rate Parameters section
@@ -389,9 +710,12 @@ class RoughnessAnalyserApp:
             instruct_card,
             text="💡 Instructions:\n"
                  "1. Select a sample name above.\n"
-                 "2. Click once on any plot to set Point 1.\n"
-                 "3. Click again to set Point 2.\n"
-                 "4. A line is drawn and the area shaded.\n"
+                 "2. The wear track is marked automatically\n"
+                 "    (green AUTO badge on the plot).\n"
+                 "3. Amber ELLE SEÇ badge = not detected,\n"
+                 "    select those two points by hand.\n"
+                 "4. Click once on a plot to clear the auto\n"
+                 "    selection, then click P1 and P2.\n"
                  "5. A third click resets the selection.",
             fg=COLOR_TEXT,
             bg=COLOR_CARD,
@@ -439,6 +763,8 @@ class RoughnessAnalyserApp:
         self.current_dir = path
         self.folder_lbl.config(text=f"Folder: {self.current_dir}")
         self.update_status(f"Scanning folder: {self.current_dir}")
+        self.loaded_data.clear()  # Clear memory cache when changing or reloading a directory
+        self.raw_data.clear()
         
         try:
             if not os.path.exists(path):
@@ -480,6 +806,17 @@ class RoughnessAnalyserApp:
         except Exception as e:
             messagebox.showerror("Error", f"Could not read directory:\n{str(e)}")
             self.update_status("Error loading directory.")
+
+    def clear_all_data(self):
+        """Clears cached loaded data, resets sample list, and resets plots to allow choosing a new dataset cleanly."""
+        self.loaded_data.clear()
+        self.raw_data.clear()
+        self.samples.clear()
+        if hasattr(self, 'sample_listbox'):
+            self.sample_listbox.delete(0, tk.END)
+        self.reset_gui_plots()
+        self.update_status("Eski veriler ve önbellek temizlendi. Yeni veri seti seçebilirsiniz.", is_success=True)
+        messagebox.showinfo("Veriler Temizlendi", "Eski veri seti ve önbellek temizlendi. Yeni bir klasör veya numune seçebilirsiniz.")
 
     def reset_gui_plots(self):
         """Hides plots and restores placeholders."""
@@ -539,7 +876,13 @@ class RoughnessAnalyserApp:
             self.placeholder_lbl.pack_forget()
             self.draw_grid_plots()
             self.update_status(f"Loaded sample: {sample_name} ({len(self.current_measurements)} measurements).", is_success=True)
-            
+
+            # Pre-select the wear track so the plots come up already marked.
+            # Silent here: the per-plot badges and the sidebar cards already say
+            # which measurements need a manual selection.
+            if self.auto_detect_var.get():
+                self.auto_detect_current_sample(announce=False)
+
             # Load existing wear rate calculations for this sample if they exist
             if self.selected_sample in self.wear_rates:
                 sdata = self.wear_rates[self.selected_sample]
@@ -558,33 +901,613 @@ class RoughnessAnalyserApp:
 
     def parse_excel_file(self, file_path):
         """
-        Loads the 'DATA' sheet from the Excel file.
-        Uses columns E (4) and F (5) as X and Y data points.
+        Loads columns E (4) and F (5) from the 'DATA' sheet in the Excel file.
+        Non-numeric header rows are safely coerced to NaN and dropped.
+        If E & F produce no numeric data (e.g. older files with 2 columns),
+        it falls back to columns A and B (indices 0 and 1).
         Caches it in self.loaded_data.
+
+        Columns C (2) and D (3) hold the same trace before Gaussian filtering.
+        The wear track survives intact there, so it is cached separately in
+        self.raw_data and used for automatic detection.
         """
         filename = os.path.basename(file_path)
         if filename in self.loaded_data:
             return self.loaded_data[filename]
             
-        # Read excel with sheet 'DATA' and header=None (0-indexed columns)
-        df = pd.read_excel(file_path, sheet_name='DATA', header=None, engine='xlrd')
+        # Case-insensitive sheet name search for 'DATA'
+        excel_file = pd.ExcelFile(file_path, engine='xlrd')
+        try:
+            data_sheet = next(
+                (s for s in excel_file.sheet_names if s.strip().casefold() == 'data'),
+                excel_file.sheet_names[0]
+            )
+            df = pd.read_excel(excel_file, sheet_name=data_sheet, header=None)
+        finally:
+            excel_file.close()
         
-        # E (column index 4) and F (column index 5) must contain numerical roughness values
-        # We drop any NaNs and convert to float
-        data = df[[4, 5]].dropna()
-        x = data[4].astype(float).values
-        y = data[5].astype(float).values
+        # Check available columns: preferred E (idx 4) & F (idx 5), fallback A (idx 0) & B (idx 1)
+        col_x, col_y = 4, 5
+        if df.shape[1] < 6:
+            col_x, col_y = 0, 1
+
+        sub = df[[col_x, col_y]].copy()
+        sub[col_x] = pd.to_numeric(sub[col_x], errors='coerce')
+        sub[col_y] = pd.to_numeric(sub[col_y], errors='coerce')
+        data = sub.dropna()
+
+        # If columns E&F yielded no numeric data, try columns A&B
+        if len(data) == 0 and (col_x != 0 or col_y != 1) and df.shape[1] >= 2:
+            sub_fb = df[[0, 1]].copy()
+            sub_fb[0] = pd.to_numeric(sub_fb[0], errors='coerce')
+            sub_fb[1] = pd.to_numeric(sub_fb[1], errors='coerce')
+            data = sub_fb.dropna()
+            col_x, col_y = 0, 1
+        
+        x = data[col_x].to_numpy(dtype=float)
+        y = data[col_y].to_numpy(dtype=float)
         
         if len(x) == 0:
-            raise ValueError("No numeric data rows found in columns E and F of sheet 'DATA'.")
+            raise ValueError("No numeric data rows found in sheet 'DATA'.")
             
         # Ensure it is sorted by x coordinates
-        sort_idx = np.argsort(x)
+        sort_idx = np.argsort(x, kind='stable')
         x = x[sort_idx]
         y = y[sort_idx]
-        
+
         self.loaded_data[filename] = (x, y)
+
+        # Cache the unfiltered trace (cols C & D) for wear-track detection
+        self.raw_data.pop(filename, None)
+        if col_x == 4 and df.shape[1] >= 4:
+            raw = df[[2, 3]].copy()
+            raw[2] = pd.to_numeric(raw[2], errors='coerce')
+            raw[3] = pd.to_numeric(raw[3], errors='coerce')
+            raw = raw.dropna()
+            if len(raw) == len(x):
+                rx = raw[2].to_numpy(dtype=float)
+                ry = raw[3].to_numpy(dtype=float)
+                rsort = np.argsort(rx, kind='stable')
+                self.raw_data[filename] = (rx[rsort], ry[rsort])
+
         return x, y
+
+    def detection_profile(self, filename):
+        """
+        Returns the (x, y) pair detection should run on.
+
+        The unfiltered trace (cols C & D) is preferred: the Gaussian roughness
+        filter flattens the wear track, so detecting on the filtered data is far
+        less reliable. Indices are shared between the two traces, so a track
+        found on the raw profile maps directly onto the displayed one.
+        """
+        if filename in self.raw_data:
+            return self.raw_data[filename]
+        return self.loaded_data.get(filename)
+
+    def display_profile(self, filename):
+        """
+        Returns the (x, y) pair that is plotted and measured.
+
+        'filtered' (cols E & F) is the default and keeps every previously
+        calculated area unchanged. 'raw' (cols C & D) plots the unfiltered
+        trace, where the wear groove keeps its true depth -- the Gaussian
+        roughness filter removes most of it, so areas measured on the filtered
+        trace under-state the worn cross-section.
+        """
+        if self.profile_source.get() == 'raw' and filename in self.raw_data:
+            return self.raw_data[filename]
+        return self.loaded_data[filename]
+
+    def on_profile_source_changed(self):
+        """Re-plots (and re-detects) after the user switches the profile source."""
+        if not self.current_measurements:
+            return
+        src = "raw (C&D, unfiltered)" if self.profile_source.get() == 'raw' \
+            else "filtered (E&F)"
+        self.reset_all_selections(update_plot=False)
+        self.draw_grid_plots()
+        if self.auto_detect_var.get():
+            self.auto_detect_current_sample(announce=False)
+        else:
+            self.canvas.draw()
+        self.update_status(f"Profile source switched to {src}. Areas recalculated.",
+                           is_success=True)
+
+    def compute_area_between(self, x, y, idx1, idx2):
+        """Area between the profile and the straight chord joining two points."""
+        idx_min, idx_max = min(idx1, idx2), max(idx1, idx2)
+        x_slice = x[idx_min: idx_max + 1]
+        y_slice = y[idx_min: idx_max + 1]
+
+        if x[idx2] != x[idx1]:
+            y_line = y[idx1] + (y[idx2] - y[idx1]) / (x[idx2] - x[idx1]) * (x_slice - x[idx1])
+        else:
+            y_line = np.full_like(x_slice, y[idx1])
+
+        return _trapz(np.abs(y_slice - y_line), x_slice)
+
+    def apply_detection(self, ax_idx, result):
+        """Turns a detection result into the same selection a manual click makes."""
+        filename = self.current_measurements[ax_idx]
+        x, y = self.display_profile(filename)
+        i1, i2 = result['i1'], result['i2']
+
+        # Detection may have run on the raw trace; clamp to the displayed one.
+        i1 = int(min(max(i1, 0), len(x) - 1))
+        i2 = int(min(max(i2, 0), len(x) - 1))
+
+        self.clicks[ax_idx] = [i1, i2]
+        self.clicked_coords[ax_idx] = [(x[i1], y[i1]), (x[i2], y[i2])]
+        self.computed_areas[ax_idx] = self.compute_area_between(x, y, i1, i2)
+
+    def auto_detect_current_sample(self, announce=True):
+        """
+        Runs wear-track detection on every measurement of the loaded sample and
+        pre-selects the track. Measurements that cannot be resolved are left
+        blank for the user to pick by hand.
+        """
+        if not self.current_measurements:
+            if announce:
+                messagebox.showwarning("No Sample Loaded", "Please select a sample first.")
+            return []
+
+        undetected = []
+        for i, filename in enumerate(self.current_measurements):
+            x_det, y_det = self.detection_profile(filename)
+            result = detect_wear_scar(x_det, y_det)
+            self.detections[i] = result
+
+            if result['status'] == 'ok':
+                self.apply_detection(i, result)
+            else:
+                self.clicks[i] = []
+                self.computed_areas[i] = None
+                self.clicked_coords[i] = [None, None]
+                undetected.append((os.path.splitext(filename)[0], result['reason']))
+
+        if self.canvas:
+            for i in range(len(self.current_measurements)):
+                self.draw_subplot(i)
+            self.canvas.draw()
+        self.update_results_display()
+
+        found = len(self.current_measurements) - len(undetected)
+        if announce:
+            if undetected:
+                lines = "\n".join(f"  • {code}  —  {reason}" for code, reason in undetected)
+                messagebox.showwarning(
+                    "Kısmi Otomatik Tespit",
+                    f"{self.selected_sample}: {found}/{len(self.current_measurements)} "
+                    f"ölçümde aşınma izi otomatik bulundu.\n\n"
+                    f"Aşağıdaki ölçümlerde aşınma izi ayırt edilemedi — "
+                    f"bu ölçümler ELLE seçilmelidir:\n\n{lines}"
+                )
+            else:
+                messagebox.showinfo(
+                    "Otomatik Tespit Tamam",
+                    f"{self.selected_sample}: {found}/{len(self.current_measurements)} "
+                    f"ölçümün tamamında aşınma izi otomatik olarak bulundu ve seçildi."
+                )
+
+        self.update_status(
+            f"Auto-detect: {found}/{len(self.current_measurements)} tracks found for {self.selected_sample}.",
+            is_success=not undetected
+        )
+        return undetected
+
+    def scan_all_samples(self):
+        """
+        Runs detection across every sample in the folder and reports which
+        measurements need manual selection, listed by sample code.
+        """
+        if not self.samples:
+            messagebox.showwarning("No Samples", "No sample files loaded. Select a folder first.")
+            return
+
+        report = []          # (code, status, reason)
+        self.root.config(cursor="watch")
+        try:
+            for sname in sorted(self.samples.keys()):
+                for filename in self.samples[sname][:4]:
+                    code = os.path.splitext(filename)[0]
+                    self.update_status(f"Scanning {code}...")
+                    try:
+                        self.parse_excel_file(os.path.join(self.current_dir, filename))
+                        x_det, y_det = self.detection_profile(filename)
+                        result = detect_wear_scar(x_det, y_det)
+                        report.append((code, result['status'], result['reason'], result))
+                    except Exception as e:
+                        report.append((code, 'error', str(e), None))
+        finally:
+            self.root.config(cursor="")
+
+        self.show_scan_report(report)
+
+    def show_scan_report(self, report):
+        """Displays the batch detection results in a scrollable window."""
+        auto_ok = [r for r in report if r[1] == 'ok']
+        manual = [r for r in report if r[1] != 'ok']
+
+        win = tk.Toplevel(self.root)
+        win.title("Wear Track Auto-Detection Report")
+        win.geometry("820x620")
+        win.configure(bg=COLOR_BG)
+        win.grab_set()
+
+        tk.Label(
+            win,
+            text="AŞINMA İZİ OTOMATİK TESPİT RAPORU",
+            font=("Segoe UI", 14, "bold"), fg=COLOR_ACCENT, bg=COLOR_BG, pady=12
+        ).pack(fill=tk.X)
+
+        tk.Label(
+            win,
+            text=f"{len(auto_ok)} / {len(report)} ölçümde aşınma izi otomatik bulundu."
+                 + (f"    •    {len(manual)} ölçüm ELLE yapılmalı." if manual else ""),
+            font=("Segoe UI", 10), fg=COLOR_WARN if manual else COLOR_SUCCESS,
+            bg=COLOR_BG, pady=4
+        ).pack(fill=tk.X)
+
+        text_frame = tk.Frame(win, bg=COLOR_CARD, bd=1,
+                              highlightbackground=COLOR_BORDER, highlightthickness=1)
+        text_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+
+        txt = tk.Text(text_frame, bg=COLOR_CARD, fg=COLOR_TEXT, bd=0,
+                      highlightthickness=0, font=("Consolas", 10), wrap=tk.WORD, padx=12, pady=12)
+        scroll = ttk.Scrollbar(text_frame, orient="vertical", command=txt.yview, style="TScrollbar")
+        txt.config(yscrollcommand=scroll.set)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        txt.tag_config('head', foreground=COLOR_ACCENT, font=("Consolas", 11, "bold"))
+        txt.tag_config('ok', foreground=COLOR_SUCCESS)
+        txt.tag_config('warn', foreground=COLOR_WARN)
+
+        if manual:
+            txt.insert(tk.END, "ELLE SEÇİLMESİ GEREKEN ÖLÇÜMLER\n", 'head')
+            txt.insert(tk.END, "(aşınma izi normal yüzey pürüzlülüğünden ayırt edilemedi)\n\n")
+            for code, status, reason, _ in manual:
+                txt.insert(tk.END, f"  {code:<12} {reason}\n", 'warn')
+            txt.insert(tk.END, "\n" + "-" * 78 + "\n\n")
+
+        txt.insert(tk.END, "OTOMATİK BULUNAN ÖLÇÜMLER\n", 'head')
+        txt.insert(tk.END, f"\n  {'Numune':<12}{'Konum (X)':<22}{'Derinlik':>10}{'Genişlik':>10}{'Güven':>8}\n\n")
+        for code, status, reason, res in auto_ok:
+            fname = self._file_for_code(code)
+            profile = self.detection_profile(fname) if fname else None
+            span = (f"{profile[0][res['i1']]:.3f} - {profile[0][res['i2']]:.3f}"
+                    if profile is not None else "-")
+            txt.insert(
+                tk.END,
+                f"  {code:<12}{span:<22}{res['depth']:>10.2f}{res['width']:>10.3f}"
+                f"{res['confidence'] * 100:>7.0f}%\n",
+                'ok'
+            )
+
+        txt.config(state=tk.DISABLED)
+
+        btns = tk.Frame(win, bg=COLOR_BG)
+        btns.pack(fill=tk.X, pady=(0, 15))
+
+        def save_report():
+            path = os.path.join(self.current_dir, "wear_track_detection_report.txt")
+            try:
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(f"Wear track auto-detection report — {self.current_dir}\n")
+                    fh.write(f"{len(auto_ok)}/{len(report)} detected automatically\n\n")
+                    if manual:
+                        fh.write("MANUAL SELECTION REQUIRED:\n")
+                        for code, status, reason, _ in manual:
+                            fh.write(f"  {code:<12} {reason}\n")
+                        fh.write("\n")
+                    fh.write("AUTO-DETECTED:\n")
+                    for code, status, reason, res in auto_ok:
+                        fh.write(f"  {code:<12} depth={res['depth']:.2f} "
+                                 f"width={res['width']:.3f} confidence={res['confidence']*100:.0f}%\n")
+                messagebox.showinfo("Report Saved", f"Report saved as:\n{path}")
+            except Exception as e:
+                messagebox.showerror("Save Error", f"Could not write report:\n{e}")
+
+        tk.Button(btns, text="💾 Save Report", font=("Segoe UI", 10, "bold"),
+                  bg=COLOR_BUTTON, fg=COLOR_TEXT, activebackground=COLOR_BUTTON_HOVER,
+                  activeforeground=COLOR_ACCENT, bd=0, padx=15, pady=8,
+                  cursor="hand2", command=save_report).pack(side=tk.LEFT, padx=20)
+
+        tk.Button(btns, text="❌ Close", font=("Segoe UI", 10, "bold"),
+                  bg=COLOR_BUTTON, fg=COLOR_TEXT, activebackground=COLOR_BUTTON_HOVER,
+                  activeforeground=COLOR_HIGHLIGHT, bd=0, padx=15, pady=8,
+                  cursor="hand2", command=win.destroy).pack(side=tk.RIGHT, padx=20)
+
+        self.update_status(
+            f"Scanned {len(report)} measurements: {len(auto_ok)} auto-detected, "
+            f"{len(manual)} need manual selection.",
+            is_success=not manual
+        )
+
+    def _file_for_code(self, code):
+        """Maps a measurement code (filename without extension) back to its file."""
+        for files in self.samples.values():
+            for f in files:
+                if os.path.splitext(f)[0] == code:
+                    return f
+        return None
+
+    # ------------------------------------------------------------------
+    # Batch analysis window (all samples, tabbed)
+    # ------------------------------------------------------------------
+
+    def open_batch_window(self):
+        """
+        Analyses every measurement in the folder and opens the tabbed batch
+        window: measurement checklist, averaged wear-track profiles
+        (surface = 0) and the specific wear rate comparison.
+
+        Averaging always runs on the raw C&D trace: the Gaussian roughness
+        filter flattens the track, so only the unfiltered profile keeps the
+        true worn cross-section.
+        """
+        if not self.samples:
+            messagebox.showwarning("No Samples", "No sample files loaded. Select a folder first.")
+            return
+
+        entries = []
+        self.root.config(cursor="watch")
+        try:
+            for sname in sorted(self.samples.keys()):
+                for filename in self.samples[sname][:4]:
+                    code = os.path.splitext(filename)[0]
+                    self.update_status(f"Analysing {code}...")
+                    entry = {'sample': sname, 'code': code, 'file': filename,
+                             'det': None, 'error': None}
+                    try:
+                        self.parse_excel_file(os.path.join(self.current_dir, filename))
+                    except Exception as e:
+                        entry['error'] = str(e)
+                        entries.append(entry)
+                        continue
+
+                    x, y = self.detection_profile(filename)
+                    det = detect_wear_scar(x, y)
+                    entry.update({'x': x, 'y': y, 'det': det})
+
+                    if det['status'] == 'ok':
+                        i1, i2 = det['i1'], det['i2']
+                        entry['area'] = self.compute_area_between(x, y, i1, i2)
+                        # Surface-zero profile for averaging: subtract the
+                        # un-worn surface trend so intact surface sits at 0.
+                        smooth = _moving_average(y, max(5, int(round(0.01 * len(y)))))
+                        base, _ = _robust_baseline(x, smooth)
+                        entry['ynorm'] = y - base
+                        entry['center'] = 0.5 * (x[i1] + x[i2])
+                        entry['half'] = 0.5 * (x[i2] - x[i1])
+                    entries.append(entry)
+        finally:
+            self.root.config(cursor="")
+
+        self.update_status(f"Batch analysis: {len(entries)} measurements scanned.", is_success=True)
+        self._build_batch_window(entries)
+
+    def _batch_params(self):
+        """Reads wear-rate parameters from the sidebar, falling back to defaults."""
+        try:
+            radius = float(self.radius_ent.get())
+            distance = float(self.dist_ent.get())
+            load = float(self.load_ent.get())
+            if radius <= 0 or distance <= 0 or load <= 0:
+                raise ValueError
+        except ValueError:
+            radius, distance, load = 2.5, 100.0, 10.0
+        return radius, distance, load
+
+    def _build_batch_window(self, entries):
+        """Creates the tabbed Toplevel for the batch analysis results."""
+        win = tk.Toplevel(self.root)
+        win.title("Batch Analysis — All Samples")
+        win.geometry("1150x780")
+        win.configure(bg=COLOR_BG)
+
+        style = ttk.Style()
+        style.configure("Batch.TNotebook", background=COLOR_BG, borderwidth=0)
+        style.configure("Batch.TNotebook.Tab", font=("Segoe UI", 10, "bold"), padding=(14, 6))
+
+        notebook = ttk.Notebook(win, style="Batch.TNotebook")
+        notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # --- Tab 1: measurement checklist -----------------------------
+        sel_tab = tk.Frame(notebook, bg=COLOR_BG)
+        notebook.add(sel_tab, text="  ☑ Ölçüm Seçimi  ")
+
+        tk.Label(
+            sel_tab,
+            text="İstemediğiniz ölçümlerin işaretini kaldırın — grafikler anında güncellenir.\n"
+                 "⚠ işaretli ölçümlerde aşınma izi otomatik ayırt edilemedi; bunlar ortalamaya katılamaz.",
+            fg=COLOR_TEXT_MUTED, bg=COLOR_BG, font=("Segoe UI", 10),
+            justify=tk.LEFT, padx=12, pady=8, anchor=tk.W
+        ).pack(fill=tk.X)
+
+        list_canvas = tk.Canvas(sel_tab, bg=COLOR_BG, bd=0, highlightthickness=0)
+        list_scroll = ttk.Scrollbar(sel_tab, orient="vertical",
+                                    command=list_canvas.yview, style="TScrollbar")
+        list_inner = tk.Frame(list_canvas, bg=COLOR_BG)
+        list_inner.bind("<Configure>",
+                        lambda e: list_canvas.configure(scrollregion=list_canvas.bbox("all")))
+        list_canvas.create_window((0, 0), window=list_inner, anchor="nw")
+        list_canvas.configure(yscrollcommand=list_scroll.set)
+        list_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(12, 0), pady=(0, 12))
+        list_scroll.pack(side=tk.RIGHT, fill=tk.Y, pady=(0, 12))
+
+        # Route the mouse wheel to this list while the pointer is over the
+        # batch window, then hand the global binding back to the sidebar.
+        def _batch_wheel(event):
+            list_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            return "break"
+
+        def _claim_wheel(_e):
+            self.root.bind_all("<MouseWheel>", _batch_wheel)
+
+        def _release_wheel(_e=None):
+            self.root.bind_all("<MouseWheel>", self._sidebar_wheel_handler)
+
+        sel_tab.bind("<Enter>", _claim_wheel)
+        sel_tab.bind("<Leave>", _release_wheel)
+
+        # --- Tab 2: averaged wear-track profiles ----------------------
+        avg_tab = tk.Frame(notebook, bg=COLOR_BG)
+        notebook.add(avg_tab, text="  📉 Ortalama İzler  ")
+
+        fig_avg, ax_avg = plt.subplots(figsize=(10, 6))
+        fig_avg.patch.set_facecolor('#ffffff')
+        avg_canvas = FigureCanvasTkAgg(fig_avg, master=avg_tab)
+        avg_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=12, pady=(12, 0))
+
+        # --- Tab 3: specific wear rate --------------------------------
+        rate_tab = tk.Frame(notebook, bg=COLOR_BG)
+        notebook.add(rate_tab, text="  📊 Specific Wear Rate  ")
+
+        fig_rate, ax_rate = plt.subplots(figsize=(10, 6))
+        fig_rate.patch.set_facecolor('#ffffff')
+        rate_canvas = FigureCanvasTkAgg(fig_rate, master=rate_tab)
+        rate_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=12, pady=(12, 0))
+
+        # --- Save buttons under the graph tabs ------------------------
+        def make_save_button(parent, fig, default_name):
+            def save():
+                graphs_dir = os.path.join(self.current_dir, "..", "graphs")
+                os.makedirs(graphs_dir, exist_ok=True)
+                path = os.path.join(graphs_dir, default_name)
+                fig.savefig(path, dpi=300, facecolor=fig.get_facecolor(), edgecolor='none')
+                messagebox.showinfo("Grafik Kaydedildi", f"Kaydedildi:\n{os.path.abspath(path)}",
+                                    parent=win)
+            btn = tk.Button(parent, text="💾 Grafiği Kaydet", font=("Segoe UI", 10, "bold"),
+                            bg=COLOR_BUTTON, fg=COLOR_TEXT,
+                            activebackground=COLOR_BUTTON_HOVER, activeforeground=COLOR_ACCENT,
+                            bd=0, padx=15, pady=8, cursor="hand2", command=save)
+            btn.pack(side=tk.BOTTOM, pady=10)
+            return btn
+
+        make_save_button(avg_tab, fig_avg, "averaged_wear_tracks.png")
+        make_save_button(rate_tab, fig_rate, "specific_wear_rates.png")
+
+        # --- Refresh logic --------------------------------------------
+        palette = ['#0984e3', '#e84393', '#00b894', '#e17055',
+                   '#6c5ce7', '#fdcb6e', '#00cec9', '#d63031']
+
+        def selected_by_sample():
+            groups = {}
+            for e in entries:
+                if e.get('det') and e['det']['status'] == 'ok' and e['var'].get():
+                    groups.setdefault(e['sample'], []).append(e)
+            return groups
+
+        def refresh(_event=None):
+            groups = selected_by_sample()
+            radius, distance, load = self._batch_params()
+
+            # Averaged, surface-zero, centre-aligned track profiles
+            ax_avg.clear()
+            ax_avg.set_facecolor('white')
+            ax_avg.grid(True, color='#e2e8f0', linestyle='--', linewidth=0.5)
+            ax_avg.axhline(0, color='black', linewidth=0.8, linestyle='-', alpha=0.6)
+            for ci, (sname, sel) in enumerate(sorted(groups.items())):
+                reach = 1.3 * max(e['half'] for e in sel)
+                for e in sel:
+                    reach = min(reach, e['center'] - e['x'][0], e['x'][-1] - e['center'])
+                if reach <= 0:
+                    continue
+                grid = np.linspace(-reach, reach, 1200)
+                curves = [np.interp(grid, e['x'] - e['center'], e['ynorm']) for e in sel]
+                mean_curve = np.mean(curves, axis=0)
+                ax_avg.plot(grid, mean_curve, linewidth=1.6,
+                            color=palette[ci % len(palette)],
+                            label=f"{sname} izi  ({len(sel)} ölçüm)")
+            ax_avg.set_xlabel('İz merkezine uzaklık [mm]', fontsize=10, fontweight='semibold')
+            ax_avg.set_ylabel('Derinlik [µm]  (yüzey = 0)', fontsize=10, fontweight='semibold')
+            ax_avg.set_title('Ortalama Aşınma İzi Profilleri', fontsize=12, fontweight='bold', pad=10)
+            if groups:
+                ax_avg.legend(fontsize=9)
+            for spine in ax_avg.spines.values():
+                spine.set_color('black')
+            fig_avg.tight_layout()
+            avg_canvas.draw()
+
+            # Specific wear rate bar chart
+            ax_rate.clear()
+            ax_rate.set_facecolor('white')
+            ax_rate.grid(True, axis='y', color='#e2e8f0', linestyle='--', linewidth=0.5)
+            names, rates = [], []
+            for sname, sel in sorted(groups.items()):
+                avg_area = float(np.mean([e['area'] for e in sel]))
+                volume = (avg_area / 1000.0) * 2.0 * np.pi * radius
+                rates.append(volume / (load * distance))
+                names.append(sname)
+            if names:
+                bars = ax_rate.bar(names, rates, color='#e84393',
+                                   edgecolor='#0c2461', linewidth=1.0, width=0.5)
+                for bar in bars:
+                    h = bar.get_height()
+                    ax_rate.text(bar.get_x() + bar.get_width() / 2., h * 1.02,
+                                 f"{h:.2e}", ha='center', va='bottom',
+                                 fontsize=8, fontweight='bold')
+                ax_rate.yaxis.get_major_formatter().set_powerlimits((0, 0))
+            ax_rate.set_xlabel('Numune', fontsize=10, fontweight='bold', labelpad=10)
+            ax_rate.set_ylabel('Specific Wear Rate [mm³/(N·m)]', fontsize=10, fontweight='bold', labelpad=10)
+            ax_rate.set_title(f'Specific Wear Rate  (R={radius} mm, d={distance} m, F={load} N)',
+                              fontsize=12, fontweight='bold', pad=10)
+            for spine in ax_rate.spines.values():
+                spine.set_color('black')
+            fig_rate.tight_layout()
+            rate_canvas.draw()
+
+        # --- Checklist rows -------------------------------------------
+        current_sample = None
+        for e in entries:
+            if e['sample'] != current_sample:
+                current_sample = e['sample']
+                tk.Label(list_inner, text=current_sample, fg=COLOR_ACCENT, bg=COLOR_BG,
+                         font=("Segoe UI", 11, "bold"), anchor=tk.W
+                         ).pack(fill=tk.X, padx=4, pady=(10, 2))
+
+            row = tk.Frame(list_inner, bg=COLOR_CARD, bd=1,
+                           highlightbackground=COLOR_BORDER, highlightthickness=1)
+            row.pack(fill=tk.X, padx=4, pady=1)
+
+            det = e.get('det')
+            ok = det is not None and det['status'] == 'ok'
+            e['var'] = tk.BooleanVar(value=ok)
+
+            chk = tk.Checkbutton(
+                row, text=e['code'], variable=e['var'],
+                bg=COLOR_CARD, fg=COLOR_TEXT, selectcolor=COLOR_BG,
+                activebackground=COLOR_CARD, activeforeground=COLOR_ACCENT,
+                font=("Segoe UI", 10, "bold"), bd=0, highlightthickness=0,
+                cursor="hand2", width=10, anchor=tk.W,
+                command=refresh,
+                state=tk.NORMAL if ok else tk.DISABLED
+            )
+            chk.pack(side=tk.LEFT, padx=(8, 4), pady=4)
+
+            if e['error']:
+                info, color = f"HATA — {e['error']}", COLOR_HIGHLIGHT
+            elif ok:
+                info = (f"✓ iz bulundu   derinlik {det['depth']:.1f} µm   "
+                        f"genişlik {det['width']:.3f} mm   alan {e['area']:.2f}   "
+                        f"güven %{det['confidence'] * 100:.0f}")
+                color = COLOR_SUCCESS
+            else:
+                info, color = f"⚠ ayırt edilemedi — {det['reason']}", COLOR_WARN
+            tk.Label(row, text=info, fg=color, bg=COLOR_CARD,
+                     font=("Segoe UI", 9), anchor=tk.W).pack(side=tk.LEFT, fill=tk.X,
+                                                             expand=True, padx=4)
+
+        def on_close():
+            _release_wheel()
+            plt.close(fig_avg)
+            plt.close(fig_rate)
+            win.destroy()
+
+        win.protocol("WM_DELETE_WINDOW", on_close)
+        refresh()
 
     def draw_grid_plots(self):
         """Creates the 2x2 grid of Matplotlib subplots inside Tkinter."""
@@ -603,9 +1526,6 @@ class RoughnessAnalyserApp:
         for i in range(4):
             ax = self.axes[i]
             if i < len(self.current_measurements):
-                filename = self.current_measurements[i]
-                x, y = self.loaded_data[filename]
-                
                 # Draw the plot
                 self.draw_subplot(i)
                 ax.set_visible(True)
@@ -629,8 +1549,8 @@ class RoughnessAnalyserApp:
         ax.clear()
         
         filename = self.current_measurements[ax_idx]
-        x, y = self.loaded_data[filename]
-        
+        x, y = self.display_profile(filename)
+
         # Clean scientific style
         ax.set_facecolor('white')
         ax.grid(True, color='#e2e8f0', linestyle='--', linewidth=0.5)
@@ -640,7 +1560,9 @@ class RoughnessAnalyserApp:
         
         # Title and Labels
         title_no_ext = os.path.splitext(filename)[0]
-        ax.set_title(title_no_ext, fontsize=11, fontweight='bold', pad=10)
+        src_tag = "raw C&D" if (self.profile_source.get() == 'raw'
+                                and filename in self.raw_data) else "filtered E&F"
+        ax.set_title(f"{title_no_ext}  [{src_tag}]", fontsize=11, fontweight='bold', pad=10)
         ax.set_xlabel('Distance [X]', fontsize=9, fontweight='semibold')
         ax.set_ylabel('Height [Y]', fontsize=9, fontweight='semibold')
         
@@ -696,6 +1618,23 @@ class RoughnessAnalyserApp:
                     bbox=dict(boxstyle='round,pad=0.3', facecolor='#ffffff', alpha=0.85, edgecolor='black', linewidth=0.5)
                 )
         
+        # Auto-detection badge in the upper-left corner
+        det = self.detections.get(ax_idx)
+        if det is not None:
+            if det['status'] == 'ok':
+                badge_txt = f"AUTO ✓  {det['confidence']*100:.0f}%"
+                badge_fg, badge_bg = '#1b5e20', '#c8e6c9'
+            else:
+                badge_txt = "ELLE SEÇ / MANUAL"
+                badge_fg, badge_bg = '#7f4f00', '#ffe0a3'
+            ax.text(
+                0.02, 0.05, badge_txt,
+                transform=ax.transAxes, ha='left', va='bottom',
+                fontsize=8, fontweight='bold', color=badge_fg,
+                bbox=dict(boxstyle='round,pad=0.3', facecolor=badge_bg,
+                          alpha=0.95, edgecolor=badge_fg, linewidth=0.6)
+            )
+
         # Recreate cursor for this axis to follow the mouse pointer (crosshair)
         # We disable useblit to prevent restoring clean canvas background over drawn elements
         self.cursors[ax_idx] = Cursor(ax, useblit=False, color=COLOR_HIGHLIGHT, linewidth=0.8, linestyle=':')
@@ -716,8 +1655,8 @@ class RoughnessAnalyserApp:
             return
             
         filename = self.current_measurements[clicked_ax_idx]
-        x, y = self.loaded_data[filename]
-        
+        x, y = self.display_profile(filename)
+
         # Snap to closest data point
         click_x = event.xdata
         idx = np.abs(x - click_x).argmin()
@@ -741,33 +1680,16 @@ class RoughnessAnalyserApp:
             
             # Compute area
             idx1, idx2 = self.clicks[ax_idx]
-            idx_min, idx_max = min(idx1, idx2), max(idx1, idx2)
-            
-            x_slice = x[idx_min : idx_max + 1]
-            y_slice = y[idx_min : idx_max + 1]
-            
-            # Straight line points
-            if x[idx2] != x[idx1]:
-                y_line = y[idx1] + (y[idx2] - y[idx1]) / (x[idx2] - x[idx1]) * (x_slice - x[idx1])
-            else:
-                y_line = np.full_like(x_slice, y[idx1])
-                
-            # Absolute difference area calculation (Trapezoidal integration rule)
-            diff = np.abs(y_slice - y_line)
-            
-            # Manual robust trapezoidal implementation (compatible with NumPy 1.x and 2.x)
-            dx = np.diff(x_slice)
-            diff_mean = (diff[:-1] + diff[1:]) / 2.0
-            area = np.sum(diff_mean * dx)
-            
-            self.computed_areas[ax_idx] = area
+            self.computed_areas[ax_idx] = self.compute_area_between(x, y, idx1, idx2)
+            self.detections[ax_idx] = None  # this selection is now the user's, not the detector's
             self.update_status(f"Plot {ax_idx+1}: Area calculated successfully.", is_success=True)
-            
+
         else:
             # Third click: reset selections
             self.clicks[ax_idx] = []
             self.computed_areas[ax_idx] = None
             self.clicked_coords[ax_idx] = [None, None]
+            self.detections[ax_idx] = None
             self.update_status(f"Plot {ax_idx+1}: Selections reset.")
             
         # Redraw only the modified subplot
@@ -798,13 +1720,32 @@ class RoughnessAnalyserApp:
                 area = self.computed_areas[i]
                 area_str = f"Area: {area:.6e}" if area is not None else "Area: --"
                 widget['area'].config(text=area_str, fg=COLOR_HIGHLIGHT)
-                widget['card'].config(highlightbackground=COLOR_BORDER)
+
+                # Auto-detection status
+                det = self.detections.get(i)
+                if det is None:
+                    widget['detect'].config(text="", fg=COLOR_TEXT_MUTED)
+                    widget['card'].config(highlightbackground=COLOR_BORDER)
+                elif det['status'] == 'ok':
+                    widget['detect'].config(
+                        text=f"✓ Otomatik bulundu — derinlik {det['depth']:.2f}, "
+                             f"genişlik {det['width']:.3f}, güven %{det['confidence']*100:.0f}",
+                        fg=COLOR_SUCCESS
+                    )
+                    widget['card'].config(highlightbackground=COLOR_SUCCESS)
+                else:
+                    widget['detect'].config(
+                        text=f"⚠ ELLE SEÇİLMELİ — {det['reason']}",
+                        fg=COLOR_WARN
+                    )
+                    widget['card'].config(highlightbackground=COLOR_WARN)
             else:
                 # Reset card display if no measurement loaded for this index
                 widget['title'].config(text=f"Measurement {i+1} (Empty)", fg=COLOR_TEXT_MUTED)
                 widget['p1'].config(text="P1: --", fg=COLOR_TEXT_MUTED)
                 widget['p2'].config(text="P2: --", fg=COLOR_TEXT_MUTED)
                 widget['area'].config(text="Area: --", fg=COLOR_TEXT_MUTED)
+                widget['detect'].config(text="")
                 widget['card'].config(highlightbackground=COLOR_BORDER)
 
     def reset_all_selections(self, update_plot=True):
@@ -813,7 +1754,8 @@ class RoughnessAnalyserApp:
             self.clicks[i] = []
             self.computed_areas[i] = None
             self.clicked_coords[i] = [None, None]
-            
+            self.detections[i] = None
+
         self.update_results_display()
         
         if update_plot and self.canvas:
