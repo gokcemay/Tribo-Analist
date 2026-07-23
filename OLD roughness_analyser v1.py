@@ -202,24 +202,7 @@ class RoughnessAnalyserApp:
             cursor="hand2",
             command=self.browse_folder
         )
-        self.dir_btn.pack(fill=tk.X, pady=(0, 8))
-        
-        # Clear / Reset Dataset Button (Eski Verileri Unut)
-        self.clear_btn = tk.Button(
-            sidebar_scroll_frame,
-            text="🧹 Clear / New Dataset (Eski Verileri Unut)",
-            font=("Segoe UI", 10, "bold"),
-            bg=COLOR_BUTTON,
-            fg=COLOR_TEXT,
-            activebackground=COLOR_BUTTON_HOVER,
-            activeforeground=COLOR_HIGHLIGHT,
-            bd=0,
-            padx=10,
-            pady=8,
-            cursor="hand2",
-            command=self.clear_all_data
-        )
-        self.clear_btn.pack(fill=tk.X, pady=(0, 15))
+        self.dir_btn.pack(fill=tk.X, pady=(0, 15))
         
         # Sample listbox header
         lbl = tk.Label(

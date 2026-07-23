@@ -645,7 +645,7 @@ class TriboPlotterApp:
         self.root.update_idletasks()
 
     def parse_tribo_file(self, file_path):
-        """Parses data file, skips metadata, handles decimal commas."""
+        """Parses data file, skips metadata, handles decimal commas and multiple file encodings."""
         filename = os.path.basename(file_path)
         if filename in self.plotted_data:
             return self.plotted_data[filename]
@@ -653,8 +653,28 @@ class TriboPlotterApp:
         distances = []
         mus = []
         
-        with open(file_path, 'r', encoding='utf-16-le') as f:
-            lines = f.readlines()
+        # Read raw bytes first to try multiple encodings cleanly
+        with open(file_path, 'rb') as f:
+            raw_data = f.read()
+            
+        encodings_to_try = ['utf-16-le', 'utf-16', 'utf-8-sig', 'utf-8', 'cp1254', 'latin1']
+        decoded_text = None
+        
+        for enc in encodings_to_try:
+            try:
+                text = raw_data.decode(enc)
+                if 'time' in text.lower() and 'distance' in text.lower():
+                    decoded_text = text
+                    break
+                if decoded_text is None:
+                    decoded_text = text
+            except (UnicodeDecodeError, ValueError):
+                continue
+                
+        if decoded_text is None:
+            decoded_text = raw_data.decode('latin1', errors='replace')
+            
+        lines = decoded_text.splitlines()
             
         header_found = False
         dist_col_idx = 1
@@ -662,12 +682,14 @@ class TriboPlotterApp:
         
         for line in lines:
             if not header_found:
-                if 'Time' in line and 'Distance' in line:
+                line_lower = line.lower()
+                if 'time' in line_lower and 'distance' in line_lower:
                     cols = [c.strip() for c in line.split('\t')]
                     for idx, col in enumerate(cols):
-                        if 'Distance' in col:
+                        col_lower = col.lower()
+                        if 'distance' in col_lower:
                             dist_col_idx = idx
-                        elif 'µ' in col or col.strip() == '' or idx == 3:
+                        elif 'µ' in col or 'mu' in col_lower or 'friction' in col_lower or col.strip() == '' or idx == 3:
                             mu_col_idx = idx
                     header_found = True
                 continue
