@@ -424,10 +424,10 @@ class RoughnessAnalyserApp:
         )
         self.dir_btn.pack(fill=tk.X, pady=(0, 8))
         
-        # Clear / Reset Dataset Button (Eski Verileri Unut)
+        # Clear / Reset Dataset Button
         self.clear_btn = tk.Button(
             sidebar_scroll_frame,
-            text="🧹 Clear / New Dataset (Eski Verileri Unut)",
+            text="🧹 Clear / New Dataset",
             font=("Segoe UI", 10, "bold"),
             bg=COLOR_BUTTON,
             fg=COLOR_TEXT,
@@ -511,7 +511,7 @@ class RoughnessAnalyserApp:
         self.auto_detect_var = tk.BooleanVar(value=self.auto_detect_enabled)
         auto_chk = tk.Checkbutton(
             detect_card,
-            text="Numune seçilince otomatik işaretle",
+            text="Auto-mark when a sample is selected",
             variable=self.auto_detect_var,
             bg=COLOR_CARD,
             fg=COLOR_TEXT,
@@ -558,7 +558,7 @@ class RoughnessAnalyserApp:
 
         self.batch_btn = tk.Button(
             detect_card,
-            text="📑 Batch Analysis (Tüm Numuneler)",
+            text="📑 Batch Analysis (All Samples)",
             font=("Segoe UI", 9, "bold"),
             bg=COLOR_BUTTON,
             fg=COLOR_ACCENT,
@@ -712,7 +712,7 @@ class RoughnessAnalyserApp:
                  "1. Select a sample name above.\n"
                  "2. The wear track is marked automatically\n"
                  "    (green AUTO badge on the plot).\n"
-                 "3. Amber ELLE SEÇ badge = not detected,\n"
+                 "3. Amber MANUAL badge = not detected,\n"
                  "    select those two points by hand.\n"
                  "4. Click once on a plot to clear the auto\n"
                  "    selection, then click P1 and P2.\n"
@@ -815,8 +815,8 @@ class RoughnessAnalyserApp:
         if hasattr(self, 'sample_listbox'):
             self.sample_listbox.delete(0, tk.END)
         self.reset_gui_plots()
-        self.update_status("Eski veriler ve önbellek temizlendi. Yeni veri seti seçebilirsiniz.", is_success=True)
-        messagebox.showinfo("Veriler Temizlendi", "Eski veri seti ve önbellek temizlendi. Yeni bir klasör veya numune seçebilirsiniz.")
+        self.update_status("Old data and cache cleared. You can select a new dataset.", is_success=True)
+        messagebox.showinfo("Data Cleared", "Old dataset and cache cleared. You can select a new folder or sample.")
 
     def reset_gui_plots(self):
         """Hides plots and restores placeholders."""
@@ -1077,17 +1077,17 @@ class RoughnessAnalyserApp:
             if undetected:
                 lines = "\n".join(f"  • {code}  —  {reason}" for code, reason in undetected)
                 messagebox.showwarning(
-                    "Kısmi Otomatik Tespit",
-                    f"{self.selected_sample}: {found}/{len(self.current_measurements)} "
-                    f"ölçümde aşınma izi otomatik bulundu.\n\n"
-                    f"Aşağıdaki ölçümlerde aşınma izi ayırt edilemedi — "
-                    f"bu ölçümler ELLE seçilmelidir:\n\n{lines}"
+                    "Partial Auto-Detection",
+                    f"{self.selected_sample}: wear track automatically found in "
+                    f"{found}/{len(self.current_measurements)} measurements.\n\n"
+                    f"The wear track could not be distinguished in the measurements "
+                    f"below — these must be selected MANUALLY:\n\n{lines}"
                 )
             else:
                 messagebox.showinfo(
-                    "Otomatik Tespit Tamam",
-                    f"{self.selected_sample}: {found}/{len(self.current_measurements)} "
-                    f"ölçümün tamamında aşınma izi otomatik olarak bulundu ve seçildi."
+                    "Auto-Detection Complete",
+                    f"{self.selected_sample}: wear track automatically found and "
+                    f"selected in all {found}/{len(self.current_measurements)} measurements."
                 )
 
         self.update_status(
@@ -1137,14 +1137,14 @@ class RoughnessAnalyserApp:
 
         tk.Label(
             win,
-            text="AŞINMA İZİ OTOMATİK TESPİT RAPORU",
+            text="WEAR TRACK AUTO-DETECTION REPORT",
             font=("Segoe UI", 14, "bold"), fg=COLOR_ACCENT, bg=COLOR_BG, pady=12
         ).pack(fill=tk.X)
 
         tk.Label(
             win,
-            text=f"{len(auto_ok)} / {len(report)} ölçümde aşınma izi otomatik bulundu."
-                 + (f"    •    {len(manual)} ölçüm ELLE yapılmalı." if manual else ""),
+            text=f"Wear track automatically found in {len(auto_ok)} / {len(report)} measurements."
+                 + (f"    •    {len(manual)} measurement(s) need manual selection." if manual else ""),
             font=("Segoe UI", 10), fg=COLOR_WARN if manual else COLOR_SUCCESS,
             bg=COLOR_BG, pady=4
         ).pack(fill=tk.X)
@@ -1165,14 +1165,14 @@ class RoughnessAnalyserApp:
         txt.tag_config('warn', foreground=COLOR_WARN)
 
         if manual:
-            txt.insert(tk.END, "ELLE SEÇİLMESİ GEREKEN ÖLÇÜMLER\n", 'head')
-            txt.insert(tk.END, "(aşınma izi normal yüzey pürüzlülüğünden ayırt edilemedi)\n\n")
+            txt.insert(tk.END, "MEASUREMENTS REQUIRING MANUAL SELECTION\n", 'head')
+            txt.insert(tk.END, "(wear track could not be distinguished from normal surface roughness)\n\n")
             for code, status, reason, _ in manual:
                 txt.insert(tk.END, f"  {code:<12} {reason}\n", 'warn')
             txt.insert(tk.END, "\n" + "-" * 78 + "\n\n")
 
-        txt.insert(tk.END, "OTOMATİK BULUNAN ÖLÇÜMLER\n", 'head')
-        txt.insert(tk.END, f"\n  {'Numune':<12}{'Konum (X)':<22}{'Derinlik':>10}{'Genişlik':>10}{'Güven':>8}\n\n")
+        txt.insert(tk.END, "AUTO-DETECTED MEASUREMENTS\n", 'head')
+        txt.insert(tk.END, f"\n  {'Sample':<12}{'Position (X)':<22}{'Depth':>10}{'Width':>10}{'Confidence':>11}\n\n")
         for code, status, reason, res in auto_ok:
             fname = self._file_for_code(code)
             profile = self.detection_profile(fname) if fname else None
@@ -1316,12 +1316,12 @@ class RoughnessAnalyserApp:
 
         # --- Tab 1: measurement checklist -----------------------------
         sel_tab = tk.Frame(notebook, bg=COLOR_BG)
-        notebook.add(sel_tab, text="  ☑ Ölçüm Seçimi  ")
+        notebook.add(sel_tab, text="  ☑ Measurement Selection  ")
 
         tk.Label(
             sel_tab,
-            text="İstemediğiniz ölçümlerin işaretini kaldırın — grafikler anında güncellenir.\n"
-                 "⚠ işaretli ölçümlerde aşınma izi otomatik ayırt edilemedi; bunlar ortalamaya katılamaz.",
+            text="Uncheck any measurements you don't want — the graphs update instantly.\n"
+                 "⚠-marked measurements had a wear track that could not be auto-detected; they cannot be included in the average.",
             fg=COLOR_TEXT_MUTED, bg=COLOR_BG, font=("Segoe UI", 10),
             justify=tk.LEFT, padx=12, pady=8, anchor=tk.W
         ).pack(fill=tk.X)
@@ -1354,7 +1354,7 @@ class RoughnessAnalyserApp:
 
         # --- Tab 2: averaged wear-track profiles ----------------------
         avg_tab = tk.Frame(notebook, bg=COLOR_BG)
-        notebook.add(avg_tab, text="  📉 Ortalama İzler  ")
+        notebook.add(avg_tab, text="  📉 Averaged Tracks  ")
 
         fig_avg, ax_avg = plt.subplots(figsize=(10, 6))
         fig_avg.patch.set_facecolor('#ffffff')
@@ -1377,9 +1377,9 @@ class RoughnessAnalyserApp:
                 os.makedirs(graphs_dir, exist_ok=True)
                 path = os.path.join(graphs_dir, default_name)
                 fig.savefig(path, dpi=300, facecolor=fig.get_facecolor(), edgecolor='none')
-                messagebox.showinfo("Grafik Kaydedildi", f"Kaydedildi:\n{os.path.abspath(path)}",
+                messagebox.showinfo("Graph Saved", f"Saved as:\n{os.path.abspath(path)}",
                                     parent=win)
-            btn = tk.Button(parent, text="💾 Grafiği Kaydet", font=("Segoe UI", 10, "bold"),
+            btn = tk.Button(parent, text="💾 Save Graph", font=("Segoe UI", 10, "bold"),
                             bg=COLOR_BUTTON, fg=COLOR_TEXT,
                             activebackground=COLOR_BUTTON_HOVER, activeforeground=COLOR_ACCENT,
                             bd=0, padx=15, pady=8, cursor="hand2", command=save)
@@ -1420,10 +1420,10 @@ class RoughnessAnalyserApp:
                 mean_curve = np.mean(curves, axis=0)
                 ax_avg.plot(grid, mean_curve, linewidth=1.6,
                             color=palette[ci % len(palette)],
-                            label=f"{sname} izi  ({len(sel)} ölçüm)")
-            ax_avg.set_xlabel('İz merkezine uzaklık [mm]', fontsize=10, fontweight='semibold')
-            ax_avg.set_ylabel('Derinlik [µm]  (yüzey = 0)', fontsize=10, fontweight='semibold')
-            ax_avg.set_title('Ortalama Aşınma İzi Profilleri', fontsize=12, fontweight='bold', pad=10)
+                            label=f"{sname} track  ({len(sel)} measurement{'s' if len(sel) != 1 else ''})")
+            ax_avg.set_xlabel('Distance from track center [mm]', fontsize=10, fontweight='semibold')
+            ax_avg.set_ylabel('Depth [µm]  (surface = 0)', fontsize=10, fontweight='semibold')
+            ax_avg.set_title('Averaged Wear Track Profiles', fontsize=12, fontweight='bold', pad=10)
             if groups:
                 ax_avg.legend(fontsize=9)
             for spine in ax_avg.spines.values():
@@ -1450,7 +1450,7 @@ class RoughnessAnalyserApp:
                                  f"{h:.2e}", ha='center', va='bottom',
                                  fontsize=8, fontweight='bold')
                 ax_rate.yaxis.get_major_formatter().set_powerlimits((0, 0))
-            ax_rate.set_xlabel('Numune', fontsize=10, fontweight='bold', labelpad=10)
+            ax_rate.set_xlabel('Sample', fontsize=10, fontweight='bold', labelpad=10)
             ax_rate.set_ylabel('Specific Wear Rate [mm³/(N·m)]', fontsize=10, fontweight='bold', labelpad=10)
             ax_rate.set_title(f'Specific Wear Rate  (R={radius} mm, d={distance} m, F={load} N)',
                               fontsize=12, fontweight='bold', pad=10)
@@ -1488,14 +1488,14 @@ class RoughnessAnalyserApp:
             chk.pack(side=tk.LEFT, padx=(8, 4), pady=4)
 
             if e['error']:
-                info, color = f"HATA — {e['error']}", COLOR_HIGHLIGHT
+                info, color = f"ERROR — {e['error']}", COLOR_HIGHLIGHT
             elif ok:
-                info = (f"✓ iz bulundu   derinlik {det['depth']:.1f} µm   "
-                        f"genişlik {det['width']:.3f} mm   alan {e['area']:.2f}   "
-                        f"güven %{det['confidence'] * 100:.0f}")
+                info = (f"✓ track found   depth {det['depth']:.1f} µm   "
+                        f"width {det['width']:.3f} mm   area {e['area']:.2f}   "
+                        f"confidence {det['confidence'] * 100:.0f}%")
                 color = COLOR_SUCCESS
             else:
-                info, color = f"⚠ ayırt edilemedi — {det['reason']}", COLOR_WARN
+                info, color = f"⚠ could not distinguish — {det['reason']}", COLOR_WARN
             tk.Label(row, text=info, fg=color, bg=COLOR_CARD,
                      font=("Segoe UI", 9), anchor=tk.W).pack(side=tk.LEFT, fill=tk.X,
                                                              expand=True, padx=4)
@@ -1625,7 +1625,7 @@ class RoughnessAnalyserApp:
                 badge_txt = f"AUTO ✓  {det['confidence']*100:.0f}%"
                 badge_fg, badge_bg = '#1b5e20', '#c8e6c9'
             else:
-                badge_txt = "ELLE SEÇ / MANUAL"
+                badge_txt = "MANUAL SELECTION"
                 badge_fg, badge_bg = '#7f4f00', '#ffe0a3'
             ax.text(
                 0.02, 0.05, badge_txt,
@@ -1728,14 +1728,14 @@ class RoughnessAnalyserApp:
                     widget['card'].config(highlightbackground=COLOR_BORDER)
                 elif det['status'] == 'ok':
                     widget['detect'].config(
-                        text=f"✓ Otomatik bulundu — derinlik {det['depth']:.2f}, "
-                             f"genişlik {det['width']:.3f}, güven %{det['confidence']*100:.0f}",
+                        text=f"✓ Auto-detected — depth {det['depth']:.2f}, "
+                             f"width {det['width']:.3f}, confidence {det['confidence']*100:.0f}%",
                         fg=COLOR_SUCCESS
                     )
                     widget['card'].config(highlightbackground=COLOR_SUCCESS)
                 else:
                     widget['detect'].config(
-                        text=f"⚠ ELLE SEÇİLMELİ — {det['reason']}",
+                        text=f"⚠ MANUAL SELECTION NEEDED — {det['reason']}",
                         fg=COLOR_WARN
                     )
                     widget['card'].config(highlightbackground=COLOR_WARN)
