@@ -20,6 +20,7 @@ COLOR_BUTTON = "#313244"     # Default button background
 COLOR_BUTTON_HOVER = "#45475A" # Button hover background
 COLOR_WARN = "#F9E2AF"       # Amber accent
 
+DEVELOPER_NAME = "Gökçe Mehmet AY"
 CONTACT_EMAIL = "gmehmetay@gmail.com"
 
 
@@ -27,8 +28,8 @@ class TriboAnalistLauncher:
     def __init__(self, root):
         self.root = root
         self.root.title("Tribo-Analist — Test & Analysis Hub")
-        self.root.geometry("1000x750")
-        self.root.minsize(850, 650)
+        self.root.geometry("1020x780")
+        self.root.minsize(880, 680)
         self.root.configure(bg=COLOR_BG)
 
         # Center window on screen
@@ -69,8 +70,34 @@ class TriboAnalistLauncher:
         )
         header_subtitle.pack(side=tk.LEFT, pady=20)
 
-        # 2. Main Container
-        main_container = tk.Frame(self.root, bg=COLOR_BG, padx=30, pady=25)
+        # Developer badge on top right
+        dev_badge = tk.Label(
+            header_frame,
+            text=f"Developer: {DEVELOPER_NAME}",
+            fg=COLOR_ACCENT_PURPLE,
+            bg=COLOR_SIDEBAR,
+            font=("Segoe UI", 9, "bold"),
+            padx=20
+        )
+        dev_badge.pack(side=tk.RIGHT, pady=20)
+
+        # 2. Bottom Status / Footer Bar
+        footer_frame = tk.Frame(self.root, bg=COLOR_SIDEBAR, height=35, bd=0, highlightthickness=0)
+        footer_frame.pack(fill=tk.X, side=tk.BOTTOM)
+        footer_frame.pack_propagate(False)
+
+        footer_lbl = tk.Label(
+            footer_frame,
+            text=f"Tribo-Analist v1.0  |  Developer: {DEVELOPER_NAME}  |  Contact: {CONTACT_EMAIL}",
+            fg=COLOR_TEXT_MUTED,
+            bg=COLOR_SIDEBAR,
+            font=("Segoe UI", 9),
+            padx=20
+        )
+        footer_lbl.pack(side=tk.LEFT, pady=6)
+
+        # 3. Main Container
+        main_container = tk.Frame(self.root, bg=COLOR_BG, padx=30, pady=20)
         main_container.pack(fill=tk.BOTH, expand=True)
 
         # Info Box / Header Banner
@@ -84,7 +111,7 @@ class TriboAnalistLauncher:
             padx=20,
             pady=15
         )
-        info_card.pack(fill=tk.X, pady=(0, 20))
+        info_card.pack(fill=tk.X, pady=(0, 15))
 
         info_title = tk.Label(
             info_card,
@@ -113,9 +140,9 @@ class TriboAnalistLauncher:
         )
         info_desc.pack(fill=tk.X)
 
-        # 3. Two Main Tool Launch Cards Container
+        # 4. Two Main Tool Launch Cards Container
         cards_frame = tk.Frame(main_container, bg=COLOR_BG)
-        cards_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 20))
+        cards_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
 
         # Grid configuration for equal 2 columns
         cards_frame.columnconfigure(0, weight=1, uniform="card_col")
@@ -133,7 +160,7 @@ class TriboAnalistLauncher:
             padx=20,
             pady=20
         )
-        card1.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        card1.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
 
         c1_icon = tk.Label(card1, text="📈", fg=COLOR_ACCENT_BLUE, bg=COLOR_CARD, font=("Segoe UI", 32))
         c1_icon.pack(anchor="w")
@@ -201,7 +228,7 @@ class TriboAnalistLauncher:
             padx=20,
             pady=20
         )
-        card2.grid(row=0, column=1, sticky="nsew", padx=(12, 0))
+        card2.grid(row=0, column=1, sticky="nsew", padx=(10, 0))
 
         c2_icon = tk.Label(card2, text="📏", fg=COLOR_ACCENT_GREEN, bg=COLOR_CARD, font=("Segoe UI", 32))
         c2_icon.pack(anchor="w")
@@ -258,7 +285,7 @@ class TriboAnalistLauncher:
         )
         btn_c2.pack(fill=tk.X, side=tk.BOTTOM)
 
-        # 4. Custom Device Integration / Development Request Banner
+        # 5. Custom Device Integration / Development Request Banner
         custom_card = tk.Frame(
             main_container,
             bg=COLOR_CARD,
@@ -287,8 +314,8 @@ class TriboAnalistLauncher:
         cc_desc = tk.Label(
             cc_left,
             text=(
-                "Do you use a different tribometer or profilometer brand (Anton Paar, Rtec, Bruker, Taylor Hobson, etc.) "
-                "and need a custom module developed to parse and analyze your specific file format?"
+                f"Do you use a different tribometer or profilometer brand (Anton Paar, Rtec, Bruker, Taylor Hobson, etc.) "
+                f"and need a custom module developed? Contact developer {DEVELOPER_NAME} ({CONTACT_EMAIL}) for custom integration."
             ),
             fg=COLOR_TEXT_MUTED,
             bg=COLOR_CARD,
@@ -301,7 +328,7 @@ class TriboAnalistLauncher:
 
         btn_contact = tk.Button(
             custom_card,
-            text="✉️ Send Email to Developer\n(gmehmetay@gmail.com)",
+            text=f"✉️ Contact Developer\n({CONTACT_EMAIL})",
             font=("Segoe UI", 10, "bold"),
             bg=COLOR_BUTTON,
             fg=COLOR_TEXT,
@@ -317,26 +344,36 @@ class TriboAnalistLauncher:
         btn_contact.pack(side=tk.RIGHT, padx=(15, 0))
 
     def launch_tribo_plotter(self):
-        """Launches tribo_plotter.py as a separate subprocess."""
-        script_path = os.path.join(self.script_dir, "tribo_plotter.py")
-        if os.path.exists(script_path):
-            subprocess.Popen([sys.executable, script_path], cwd=self.script_dir)
-        else:
-            messagebox.showerror("Error", f"Script not found:\n{script_path}")
+        """Launches tribo_plotter as a Toplevel window or subprocess."""
+        try:
+            from tribo_plotter import TriboPlotterApp
+            top = tk.Toplevel(self.root)
+            TriboPlotterApp(top)
+        except Exception as e:
+            script_path = os.path.join(self.script_dir, "tribo_plotter.py")
+            if os.path.exists(script_path):
+                subprocess.Popen([sys.executable, script_path], cwd=self.script_dir)
+            else:
+                messagebox.showerror("Error", f"Could not launch CSM Tribometer Analyser:\n{e}")
 
     def launch_roughness_analyser(self):
-        """Launches roughness_analyser.py as a separate subprocess."""
-        script_path = os.path.join(self.script_dir, "roughness_analyser.py")
-        if os.path.exists(script_path):
-            subprocess.Popen([sys.executable, script_path], cwd=self.script_dir)
-        else:
-            messagebox.showerror("Error", f"Script not found:\n{script_path}")
+        """Launches roughness_analyser as a Toplevel window or subprocess."""
+        try:
+            from roughness_analyser import RoughnessAnalyserApp
+            top = tk.Toplevel(self.root)
+            RoughnessAnalyserApp(top)
+        except Exception as e:
+            script_path = os.path.join(self.script_dir, "roughness_analyser.py")
+            if os.path.exists(script_path):
+                subprocess.Popen([sys.executable, script_path], cwd=self.script_dir)
+            else:
+                messagebox.showerror("Error", f"Could not launch Mitutoyo Profilometer Analyser:\n{e}")
 
     def open_contact_dialog(self):
         """Opens default mail client and shows a custom contact dialog with email details."""
         subject = "Tribo-Analist Custom Device Integration Request"
         body = (
-            "Hello Mehmet,\n\n"
+            f"Hello {DEVELOPER_NAME},\n\n"
             "We would like to request custom integration/support for our testing device in Tribo-Analist.\n\n"
             "Device Brand/Model:\n"
             "Output File Format (.txt / .csv / .xls etc.):\n\n"
@@ -352,7 +389,7 @@ class TriboAnalistLauncher:
         # Also open modal dialog for direct visibility
         dlg = tk.Toplevel(self.root)
         dlg.title("Custom Device Integration & Development Request")
-        dlg.geometry("540x360")
+        dlg.geometry("560x380")
         dlg.resizable(False, False)
         dlg.configure(bg=COLOR_CARD)
         dlg.transient(self.root)
@@ -360,13 +397,13 @@ class TriboAnalistLauncher:
 
         # Center dialog
         dlg.update_idletasks()
-        dx = self.root.winfo_x() + (self.root.winfo_width() // 2) - (270)
-        dy = self.root.winfo_y() + (self.root.winfo_height() // 2) - (180)
+        dx = self.root.winfo_x() + (self.root.winfo_width() // 2) - (280)
+        dy = self.root.winfo_y() + (self.root.winfo_height() // 2) - (190)
         dlg.geometry(f"+{dx}+{dy}")
 
         dlg_title = tk.Label(
             dlg,
-            text="📧 Contact & Development Request",
+            text="📧 Contact Developer",
             fg=COLOR_ACCENT_PURPLE,
             bg=COLOR_CARD,
             font=("Segoe UI", 14, "bold"),
@@ -374,17 +411,26 @@ class TriboAnalistLauncher:
         )
         dlg_title.pack(fill=tk.X)
 
+        dev_info_lbl = tk.Label(
+            dlg,
+            text=f"Developer: {DEVELOPER_NAME}",
+            fg=COLOR_ACCENT_GREEN,
+            bg=COLOR_CARD,
+            font=("Segoe UI", 11, "bold")
+        )
+        dev_info_lbl.pack(pady=(0, 10))
+
         dlg_msg = tk.Label(
             dlg,
             text=(
                 "Your default email client has been launched.\n\n"
                 "To request custom file parsers, automated reporting, or interface development for your "
-                "tribometer or profilometer devices, you can reach out directly via the email address below:"
+                "tribometer or profilometer devices, you can reach out directly to the developer below:"
             ),
             fg=COLOR_TEXT,
             bg=COLOR_CARD,
             font=("Segoe UI", 10),
-            wraplength=480,
+            wraplength=500,
             justify=tk.CENTER
         )
         dlg_msg.pack(pady=(0, 15), padx=20)
