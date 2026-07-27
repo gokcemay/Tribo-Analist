@@ -70,7 +70,7 @@ By default each tool looks for a data subfolder next to the script (`Roughness/`
 ### 💻 Standalone Windows Executable (.exe)
 
 For Windows users who do not have Python installed, a pre-compiled standalone executable is available:
-- You can locate or build the executable at `dist/Tribo-Analist.exe` (or download it directly from the project's **Releases** page).
+- Download `Tribo-Analist.exe` from the project's **[Releases](https://github.com/gokcemay/Tribo-Analist/releases)** page, or build it yourself with `pyinstaller Tribo-Analist.spec` (produces `dist/Tribo-Analist.exe`).
 - Simply double-click `Tribo-Analist.exe` to launch the unified GUI launcher without any Python dependencies or installation steps.
 
 ### ✉️ Custom Device Integration & Software Adaptation
@@ -158,7 +158,7 @@ Her iki araç da varsayılan olarak script'in yanındaki bir veri klasörüne ba
 ### 💻 Bağımsız Windows Uygulaması (.exe)
 
 Bilgisayarında Python kurulu olmayan Windows kullanıcıları için derlenmiş hazır `.exe` uygulaması sunulmaktadır:
-- `dist/Tribo-Analist.exe` konumundan (veya projenin **Releases** sayfasından) indirilebilir.
+- Projenin **[Releases](https://github.com/gokcemay/Tribo-Analist/releases)** sayfasından `Tribo-Analist.exe` indirilebilir, ya da `pyinstaller Tribo-Analist.spec` komutuyla kendiniz derleyebilirsiniz (`dist/Tribo-Analist.exe` üretir).
 - Python veya kütüphane kurulumu gerekmeden doğrudan `Tribo-Analist.exe` dosyasına çift tıklayarak ana analiz merkezini başlatabilirsiniz.
 
 ### ✉️ Özel Cihaz Entegrasyonu & Yazılım Uyarlama
