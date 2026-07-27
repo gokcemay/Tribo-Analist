@@ -67,13 +67,26 @@ python roughness_analyser.py
 
 By default each tool looks for a data subfolder next to the script (`Roughness/` for the roughness analyser) or the script's own folder (for the plotter); use the **"Select Folder"** button in the GUI to point to your own data directory.
 
+### 💻 Standalone Windows Executable (.exe)
+
+For Windows users who do not have Python installed, a pre-compiled standalone executable is available:
+- You can locate or build the executable at `dist/Tribo-Analist.exe` (or download it directly from the project's **Releases** page).
+- Simply double-click `Tribo-Analist.exe` to launch the unified GUI launcher without any Python dependencies or installation steps.
+
+### ✉️ Custom Device Integration & Software Adaptation
+
+If your laboratory uses different brands or models of tribometers or surface profilometers (e.g., **Anton Paar, Rtec, Bruker, Taylor Hobson, KLA, Nanovea**, etc.) and you require a custom data parser, automated reporting feature, or customized user interface adapted for your specific file exports:
+
+Please feel free to contact developer **Gökçe Mehmet AY** via email:
+👉 **`gmehmetay@gmail.com`**
+
 ### ⚠️ Important: file-format dependency
 
 These two scripts were written to match the **exact export format of our own lab instruments**:
 - the CSM tribometer's tab-separated `.txt` output (specific header wording, column order, and encoding quirks), and
 - the Mitutoyo contact profilometer's `.xls` export (fixed sheet name `DATA`, columns C–F reserved for raw/filtered X–Y profile pairs).
 
-If your tribometer or profilometer produces files in a **different layout, delimiter, encoding, or column order**, the parsers (`parse_tribo_file` in `tribo_plotter.py` and `parse_excel_file` in `roughness_analyser.py`) will need to be adapted, or a new parser branch can be added, so the program can recognize and import that format as well. This is planned as a future extension: **adding support for other tribometer/profilometer brands and export formats**, so the analysis and plotting logic can be reused beyond the two devices currently supported.
+If your tribometer or profilometer produces files in a **different layout, delimiter, encoding, or column order**, the parsers (`parse_tribo_file` in `tribo_plotter.py` and `parse_excel_file` in `roughness_analyser.py`) will need to be adapted, or a new parser branch can be added, so the program can recognize and import that format as well.
 
 ### Status
 
@@ -142,13 +155,26 @@ python roughness_analyser.py
 
 Her iki araç da varsayılan olarak script'in yanındaki bir veri klasörüne bakar (`roughness_analyser.py` için `Roughness/` klasörü, `tribo_plotter.py` için script'in bulunduğu klasör); arayüzdeki **"Klasör Seç"** butonuyla kendi veri klasörünüzü seçebilirsiniz.
 
+### 💻 Bağımsız Windows Uygulaması (.exe)
+
+Bilgisayarında Python kurulu olmayan Windows kullanıcıları için derlenmiş hazır `.exe` uygulaması sunulmaktadır:
+- `dist/Tribo-Analist.exe` konumundan (veya projenin **Releases** sayfasından) indirilebilir.
+- Python veya kütüphane kurulumu gerekmeden doğrudan `Tribo-Analist.exe` dosyasına çift tıklayarak ana analiz merkezini başlatabilirsiniz.
+
+### ✉️ Özel Cihaz Entegrasyonu & Yazılım Uyarlama
+
+Laboratuvarınızda farklı marka veya model tribometre ya da profilometre cihazları (**Anton Paar, Rtec, Bruker, Taylor Hobson, KLA, Nanovea** vb.) kullanıyorsanız ve kendi dosya çıktılarınıza özel veri ayrıştırıcı, otomatik raporlama veya arayüz geliştirmesi isterseniz:
+
+Geliştirici **Gökçe Mehmet AY** ile e-posta üzerinden doğrudan iletişime geçebilirsiniz:
+👉 **`gmehmetay@gmail.com`**
+
 ### ⚠️ Önemli: dosya formatı bağımlılığı
 
 Bu iki program, **kendi laboratuvarımızdaki cihazların ürettiği çıktı formatına** özel olarak yazılmıştır:
 - CSM tribometrenin sekmeyle ayrılmış `.txt` çıktısı (belirli başlık ifadeleri, sütun sırası ve kodlama özellikleri), ve
 - Mitutoyo temaslı profilometrenin `.xls` çıktısı (sabit `DATA` sayfa adı; ham/filtrelenmiş X–Y profil çiftleri için ayrılmış C–F sütunları).
 
-Eğer sizin tribometreniz veya profilometreniz **farklı bir düzende, ayraçla, kodlamayla veya sütun sırasıyla** dosya üretiyorsa, ayrıştırıcı (parser) fonksiyonlarının (`tribo_plotter.py` içindeki `parse_tribo_file` ve `roughness_analyser.py` içindeki `parse_excel_file`) o formata uyarlanması ya da yeni bir ayrıştırıcı dalının eklenmesi gerekir; böylece program o formatı da tanıyıp içe aktarabilir. Bu, gelecekte planlanan bir geliştirme alanıdır: **farklı marka tribometre/profilometre cihazlarının çıktı formatlarını da destekleyerek**, analiz ve grafik mantığının yalnızca şu an desteklenen iki cihazın ötesinde de kullanılabilir hale getirilmesi.
+Eğer sizin tribometreniz veya profilometreniz **farklı bir düzende, ayraçla, kodlamayla veya sütun sırasıyla** dosya üretiyorsa, ayrıştırıcı (parser) fonksiyonlarının (`tribo_plotter.py` içindeki `parse_tribo_file` ve `roughness_analyser.py` içindeki `parse_excel_file`) o formata uyarlanması ya da yeni bir ayrıştırıcı dalının eklenmesi gerekir.
 
 ### Durum
 
