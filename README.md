@@ -54,6 +54,10 @@ pip install pandas numpy matplotlib xlrd
 ### Usage
 
 ```bash
+# Main Launcher GUI (Select between CSM Tribometer & Mitutoyo Profilometer)
+python main.py
+
+# Or launch individual tools directly:
 # Friction coefficient plotting (CSM tribometer .txt files)
 python tribo_plotter.py
 
@@ -125,6 +129,10 @@ pip install pandas numpy matplotlib xlrd
 ### Kullanım
 
 ```bash
+# Ana Başlatıcı Arayüzü (CSM Tribometre ve Mitutoyo Profilometre seçimi)
+python main.py
+
+# Veya araçları doğrudan tek tek başlatmak için:
 # Sürtünme katsayısı grafiği (CSM tribometre .txt dosyaları)
 python tribo_plotter.py
 
