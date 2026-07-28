@@ -2,8 +2,18 @@
 
 A walkthrough of both tools with screenshots. For installation and file-format requirements, see [README.md](README.md).
 
+## Demo video
+
+<video src="docs/tribo_analist_usage_slideshow.mp4" controls width="720">
+  Your browser (or GitHub's renderer) can't play this inline —
+  <a href="docs/tribo_analist_usage_slideshow.mp4">download the video directly</a>.
+</video>
+
+*(44s slideshow of the screenshots below, with captions. Click to play.)*
+
 ## Contents
 
+- [Demo video](#demo-video)
 - [1. Launcher](#1-launcher)
 - [2. Mitutoyo Profilometer Analyser (`roughness_analyser.py`)](#2-mitutoyo-profilometer-analyser-roughness_analyserpy)
   - [2.1 Loading a data folder](#21-loading-a-data-folder)

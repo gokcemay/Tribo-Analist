@@ -17,6 +17,8 @@ Tribo-Analist is a set of two Python/Tkinter desktop applications for post-proce
 
 Both tools have a dark-themed GUI, sample/file browsers, and batch-processing features (batch wear-rate analysis across multiple samples in `roughness_analyser.py`; multi-file selection and overlay plotting in `tribo_plotter.py`).
 
+📖 **[See USAGE.md](USAGE.md)** for a full walkthrough with screenshots and a demo video.
+
 ### Key features
 
 **`tribo_plotter.py` (friction curves)**
@@ -104,6 +106,8 @@ Tribo-Analist, pin-on-disk / ball-on-disk aşınma ve sürtünme testlerinde eld
 | `roughness_analyser.py` | **Mitutoyo temaslı (contact) profilometre** aşınma izi profillerini yükler, aşınma izini otomatik tespit eder, gerekirse elle düzeltme imkânı verir; kesit alanı, aşınma hacmi ve özgül aşınma oranını (Archard tipi, mm³/(N·m)) hesaplar. | `.xls` profilometre çıktı dosyaları (`DATA` sayfalı) |
 
 Her iki program da koyu temalı bir arayüze, numune/dosya tarayıcısına ve toplu işlem (batch) özelliklerine sahiptir (`roughness_analyser.py`'de birden fazla numune üzerinde toplu aşınma oranı analizi; `tribo_plotter.py`'de çoklu dosya seçimi ve üst üste çizim).
+
+📖 **[USAGE.md dosyasına bakın](USAGE.md)** — ekran görüntüleri ve tanıtım videosuyla birlikte tam kullanım kılavuzu.
 
 ### Öne çıkan özellikler
 
