@@ -1,0 +1,31 @@
+Tribo-Analist Dual License
+
+Copyright (C) 2026 Gökçe Mehmet AY
+
+Tribo-Analist is offered under a dual-license model. You may choose either:
+
+1. GNU General Public License version 3.0 only (GPL-3.0-only), or
+2. A separate commercial license granted in writing by the copyright holder.
+
+Open-source option
+------------------
+You may use, study, modify, and redistribute this software under the terms of the GNU General Public License version 3.0 only.
+
+The complete and authoritative GPL-3.0 license text is available at:
+https://www.gnu.org/licenses/gpl-3.0.html
+
+SPDX-License-Identifier: GPL-3.0-only
+
+If you distribute this software, a modified version, or a covered derivative work under this option, you must comply with GPL-3.0, including its source-code and licensing obligations.
+
+Commercial option
+-----------------
+A commercial license is required if you want to use, modify, embed, integrate, or distribute this software in a proprietary, closed-source, or otherwise GPL-incompatible product or service.
+
+Commercial licenses are granted only through a separate written agreement. See COMMERCIAL-LICENSE.md for details.
+
+Accessing, cloning, downloading, or using this repository does not by itself grant a commercial license. Unless you have a separate written commercial agreement, your rights are governed solely by GPL-3.0-only.
+
+Warranty disclaimer
+-------------------
+THIS SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR ITS USE.
