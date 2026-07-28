@@ -245,7 +245,7 @@ class TriboPlotterApp:
         # Overlay mode checkbox
         self.overlay_chk = tk.Checkbutton(
             options_card,
-            text="Overlay Mode (Aynı Plotta Göster)",
+            text="Overlay Mode (Show on Same Plot)",
             variable=self.overlay_mode,
             onvalue=True,
             offvalue=False,

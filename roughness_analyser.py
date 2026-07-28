@@ -497,9 +497,9 @@ class RoughnessAnalyserApp:
         # original behaviour exactly, so existing results are unaffected.
         src_row = tk.Frame(detect_card, bg=COLOR_CARD)
         src_row.pack(fill=tk.X, pady=(0, 6))
-        tk.Label(src_row, text="Profil:", fg=COLOR_TEXT, bg=COLOR_CARD,
+        tk.Label(src_row, text="Profile:", fg=COLOR_TEXT, bg=COLOR_CARD,
                  font=("Segoe UI", 9), anchor=tk.W).pack(side=tk.LEFT)
-        for label, value in (("E&F (filtre)", 'filtered'), ("C&D (ham)", 'raw')):
+        for label, value in (("E&F (filtered)", 'filtered'), ("C&D (raw)", 'raw')):
             tk.Radiobutton(
                 src_row, text=label, value=value, variable=self.profile_source,
                 bg=COLOR_CARD, fg=COLOR_TEXT, selectcolor=COLOR_BG,
