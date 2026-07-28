@@ -4,12 +4,12 @@ A walkthrough of both tools with screenshots. For installation and file-format r
 
 ## Demo video
 
-<video src="docs/tribo_analist_usage_slideshow.mp4" controls width="720">
+<video src="docs/tribo_analist_usage_narrated.mp4" controls width="720">
   Your browser (or GitHub's renderer) can't play this inline —
-  <a href="docs/tribo_analist_usage_slideshow.mp4">download the video directly</a>.
+  <a href="docs/tribo_analist_usage_narrated.mp4">download the video directly</a>.
 </video>
 
-*(44s slideshow of the screenshots below, with captions. Click to play.)*
+*(109s narrated walkthrough of the screenshots below. Click to play.)*
 
 ## Contents
 
