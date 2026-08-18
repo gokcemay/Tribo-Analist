@@ -1,5 +1,6 @@
 import os
 import sys
+import re
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import pandas as pd
@@ -35,6 +36,33 @@ DETECT_MIN_DEPTH_SIGMA = 4.0   # valley must be this many roughness sigmas deep
 DETECT_MIN_WIDTH_FRAC = 0.02   # ...and this fraction of the trace long
 DETECT_MIN_WIDTH_ABS = 0.05    # ...with an absolute floor in X units (mm)
 DETECT_MAX_WIDTH_FRAC = 0.80   # a valley wider than this leaves no reference
+
+
+def extract_sample_name(filename):
+    """
+    Extracts the sample group name from a filename.
+    Supports delimiters like '-' and '_', regex measurement suffix patterns (e.g. _A1, -01, _1),
+    and falls back to full stem so no files are dropped.
+    """
+    stem = os.path.splitext(filename)[0]
+    
+    # 1. Regex match for trailing measurement suffix separated by - or _ (e.g. _A1, _A2, -01, _1, _rep1)
+    m = re.match(r'^(.*?)[-_](?:[a-zA-Z]?\d+|\d+[a-zA-Z]?|rep\d+|p\d+|m\d+)$', stem, re.IGNORECASE)
+    if m and m.group(1).strip():
+        return m.group(1).strip()
+        
+    # 2. If hyphen present, split by first hyphen (backward compatibility)
+    if '-' in stem:
+        return stem.split('-')[0].strip()
+
+    # 3. If underscore present, split by last underscore
+    if '_' in stem:
+        parts = stem.rsplit('_', 1)
+        if parts[0].strip():
+            return parts[0].strip()
+
+    # 4. Fallback: use full stem
+    return stem
 
 
 def _trapz(yv, xv):
@@ -775,16 +803,18 @@ class RoughnessAnalyserApp:
                 return
                 
             all_files = os.listdir(path)
-            xls_files = sorted([f for f in all_files if f.lower().endswith('.xls') and os.path.isfile(os.path.join(path, f))])
+            xls_files = sorted([
+                f for f in all_files 
+                if f.lower().endswith(('.xls', '.xlsx')) and not f.startswith('~$') and os.path.isfile(os.path.join(path, f))
+            ])
             
-            # Group by prefix before '-'
+            # Group files into samples
             self.samples = {}
             for f in xls_files:
-                if '-' in f:
-                    sample_name = f.split('-')[0].strip()
-                    if sample_name not in self.samples:
-                        self.samples[sample_name] = []
-                    self.samples[sample_name].append(f)
+                sample_name = extract_sample_name(f)
+                if sample_name not in self.samples:
+                    self.samples[sample_name] = []
+                self.samples[sample_name].append(f)
             
             # Sort files inside each sample group
             for sname in self.samples:
@@ -916,7 +946,13 @@ class RoughnessAnalyserApp:
             return self.loaded_data[filename]
             
         # Case-insensitive sheet name search for 'DATA'
-        excel_file = pd.ExcelFile(file_path, engine='xlrd')
+        if file_path.lower().endswith('.xlsx'):
+            excel_file = pd.ExcelFile(file_path, engine='openpyxl')
+        else:
+            try:
+                excel_file = pd.ExcelFile(file_path, engine='xlrd')
+            except Exception:
+                excel_file = pd.ExcelFile(file_path)
         try:
             data_sheet = next(
                 (s for s in excel_file.sheet_names if s.strip().casefold() == 'data'),

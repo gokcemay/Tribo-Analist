@@ -46,7 +46,7 @@ Both tools can also be run directly — `python roughness_analyser.py` or `pytho
 
 ### 2.1 Loading a data folder
 
-On startup the app looks for a `Roughness/` folder next to the script; use **Select Roughness Folder** to point it elsewhere. `.xls` files are grouped into samples by the part of the filename before the `-` (so `A1-01.xls`, `A1-02.xls`, `A1-03.xls`, `A1-04.xls` all belong to sample **A1**). Pick a sample from the list to load its measurements:
+On startup the app looks for a `Roughness/` folder next to the script; use **Select Roughness Folder** to point it elsewhere. `.xls` and `.xlsx` files are automatically grouped into samples using standard delimiters (`-` or `_`) and measurement suffixes (e.g. `A1-01.xls` -> **A1**, `ABS_XY_AP_DLC_1N_1_A1.xls` -> **ABS_XY_AP_DLC_1N_1**). Pick a sample from the list to load its measurements:
 
 ![Empty state, folder loaded, no sample selected](docs/images/roughness_empty.png)
 
